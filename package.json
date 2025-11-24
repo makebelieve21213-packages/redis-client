@@ -1,6 +1,6 @@
 {
   "name": "@makebelieve21213-packages/redis-client",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Redis client for NestJS with connection pooling, caching strategies, and user-specific key generation",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,7 +47,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@makebelieve21213-packages/logger": "^1.0.5",
+    "@makebelieve21213-packages/logger": "^1.0.7",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/platform-socket.io": "^11.0.1",
