@@ -1,0 +1,259 @@
+# @packages/redis-client - Документация для ИИ
+
+## Краткое описание
+
+Redis клиент для NestJS с паттерном Singleton, connection pooling и удобными методами для работы с кэшированием и масштабирования Socket.IO серверов. Предоставляет глобальный NestJS модуль для простой интеграции.
+
+## Архитектура
+
+Пакет предоставляет единое подключение к Redis через Singleton паттерн:
+- Глобальный модуль `RedisClientModule` для интеграции в NestJS
+- Сервис `RedisClientService` с методами для работы с Redis
+- Адаптер `RedisSocketIoAdapter` для масштабирования Socket.IO через Redis
+
+## Структура пакета
+
+```
+src/
+├── main/                                 # Основная логика
+│   ├── redis.module.ts                   # RedisClientModule - глобальный NestJS модуль
+│   └── redis.service.ts                  # RedisClientService - Singleton сервис с Redis операциями
+│
+├── adapters/                             # Адаптеры
+│   └── redis-socket-io.adapter.ts        # RedisSocketIoAdapter для Socket.IO масштабирования
+│
+├── types/                                # TypeScript типы и интерфейсы
+│   ├── module-options.interface.ts       # Опции конфигурации модуля
+│   ├── redis.interface.ts                # Интерфейс RedisClientContract
+│   ├── socket-io-adapter.interface.ts    # Опции Socket.IO адаптера
+│   └── injection-keys.ts                 # DI токены
+│
+├── errors/                               # Кастомные ошибки
+│   └── redis.error.ts                    # RedisClientError
+│
+└── index.ts                              # Точка входа - экспорты всех публичных API
+```
+
+## Основные компоненты
+
+### RedisClientModule
+
+Глобальный NestJS модуль для единого подключения к Redis.
+
+Метод инициализации:
+- `forRootAsync(options)` - асинхронная инициализация через useFactory
+
+Параметры:
+- `useFactory: (deps) => RedisClientModuleOptions` - фабрика для создания опций модуля
+- `inject?: InjectionToken[]` - зависимости для инжекции в useFactory
+- `imports?: Module[]` - дополнительные модули для DI
+
+Опции (возвращаемые useFactory):
+- `host: string` - хост Redis сервера
+- `port: number` - порт Redis сервера
+- `password?: string` - пароль для аутентификации (опционально)
+- `db?: number` - номер базы данных Redis (0-15, по умолчанию 0)
+- `options?: Partial<RedisOptions>` - дополнительные опции ioredis
+
+Экспортирует: `RedisClientService`
+
+### RedisClientService
+
+Сервис для работы с Redis. Использует Singleton паттерн для единого подключения.
+
+Методы:
+
+#### Основные методы
+- `get(key: string): Promise<string | null>` - получить значение по ключу
+- `set(key: string, value: string, ttlSeconds?: number): Promise<void>` - установить значение с опциональным TTL
+- `del(key: string): Promise<number>` - удалить ключ (возвращает 0 или 1)
+- `ttl(key: string): Promise<number>` - получить TTL (-2: не существует, -1: без TTL, >0: секунды)
+- `makeUserKey(userId: string, key: string): string` - сформировать `user:{userId}:{key}`
+- `getClient(): Redis` - получить прямой доступ к ioredis клиенту (для продвинутых операций)
+- `isConnected(): boolean` - проверить подключение
+- `disconnect(): Promise<void>` - отключиться (автоматически при shutdown)
+
+#### Hash методы
+- `hset(key: string, field: string, value: string): Promise<number>` - установить поле в Hash
+- `hget(key: string, field: string): Promise<string | null>` - получить поле из Hash
+- `hgetall(key: string): Promise<Record<string, string>>` - получить все поля из Hash
+- `hdel(key: string, field: string): Promise<number>` - удалить поле из Hash
+- `hexists(key: string, field: string): Promise<number>` - проверить существование поля в Hash
+- `hscan(key: string, cursor: number, pattern?: string, count?: number): Promise<[string, string[]]>` - сканировать Hash
+
+#### Sorted Set методы
+- `zadd(key: string, score: number, member: string): Promise<number>` - добавить элемент в Sorted Set
+- `zrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]>` - получить элементы по диапазону
+- `zrem(key: string, member: string): Promise<number>` - удалить элемент из Sorted Set
+- `zremrangebyscore(key: string, min: number | string, max: number | string): Promise<number>` - удалить элементы по score диапазону
+- `zscore(key: string, member: string): Promise<string | null>` - получить score элемента
+
+#### Set методы
+- `sadd(key: string, member: string): Promise<number>` - добавить элемент в Set
+- `smembers(key: string): Promise<string[]>` - получить все элементы Set
+- `srem(key: string, member: string): Promise<number>` - удалить элемент из Set
+- `sismember(key: string, member: string): Promise<number>` - проверить существование элемента в Set
+
+#### Redis Streams методы
+- `xadd(key: string, id: string, fields: Record<string, string>): Promise<string>` - добавить запись в Stream
+- `xread(streams: Array<{ key: string; id: string }>, count?: number): Promise<Array<{ key: string; messages: Array<{ id: string; fields: Record<string, string> }> }>> | null>` - прочитать записи из Stream
+- `xtrim(key: string, maxlen: number): Promise<number>` - обрезать Stream до maxlen
+
+#### Очистка методы
+- `scan(cursor: number, pattern?: string, count?: number): Promise<[string, string[]]>` - сканировать ключи по паттерну
+- `cleanupOldKeys(pattern: string, maxAgeSeconds: number): Promise<number>` - очистить старые ключи по паттерну
+
+### RedisSocketIoAdapter
+
+Адаптер для масштабирования Socket.IO серверов через Redis.
+
+Метод инициализации:
+- Конструктор принимает `app`, `configService`, `logger`, `redisClientService`
+
+Использование:
+```typescript
+app.useWebSocketAdapter(new RedisSocketIoAdapter(app, configService, logger, redisClientService));
+```
+
+## Типы
+
+### RedisClientModuleOptions
+
+```typescript
+interface RedisClientModuleOptions {
+  host: string;
+  port: number;
+  password?: string;
+  db?: number;
+  options?: Partial<RedisOptions>;
+}
+```
+
+### RedisClientContract
+
+Интерфейс для Redis клиента (используется внутри пакета, не экспортируется).
+
+```typescript
+interface RedisClientContract {
+  // Основные методы
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+  del(key: string): Promise<number>;
+  ttl(key: string): Promise<number>;
+  makeUserKey(userId: string, key: string): string;
+  isConnected(): boolean;
+  disconnect(): Promise<void>;
+  getClient(): Redis;
+  
+  // Hash методы
+  hset(key: string, field: string, value: string): Promise<number>;
+  hget(key: string, field: string): Promise<string | null>;
+  hgetall(key: string): Promise<Record<string, string>>;
+  hdel(key: string, field: string): Promise<number>;
+  hexists(key: string, field: string): Promise<number>;
+  hscan(key: string, cursor: number, pattern?: string, count?: number): Promise<[string, string[]]>;
+  
+  // Sorted Set методы
+  zadd(key: string, score: number, member: string): Promise<number>;
+  zrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]>;
+  zrem(key: string, member: string): Promise<number>;
+  zremrangebyscore(key: string, min: number | string, max: number | string): Promise<number>;
+  zscore(key: string, member: string): Promise<string | null>;
+  
+  // Set методы
+  sadd(key: string, member: string): Promise<number>;
+  smembers(key: string): Promise<string[]>;
+  srem(key: string, member: string): Promise<number>;
+  sismember(key: string, member: string): Promise<number>;
+  
+  // Redis Streams методы
+  xadd(key: string, id: string, fields: Record<string, string>): Promise<string>;
+  xread(streams: Array<{ key: string; id: string }>, count?: number): Promise<Array<{ key: string; messages: Array<{ id: string; fields: Record<string, string> }> }>> | null>;
+  xtrim(key: string, maxlen: number): Promise<number>;
+  
+  // Очистка методы
+  scan(cursor: number, pattern?: string, count?: number): Promise<[string, string[]]>;
+  cleanupOldKeys(pattern: string, maxAgeSeconds: number): Promise<number>;
+}
+```
+
+## Обработка ошибок
+
+### RedisClientError
+
+Кастомная ошибка Redis клиента с автоматическим логированием:
+- Автоматически логирует ошибку при создании через `LoggerService`
+- Сохраняет stack trace оригинальной ошибки
+- Предоставляет доступ к оригинальной ошибке через `getOriginalError()`
+- Используется во всех методах Redis для обработки ошибок
+
+## Переменные окружения
+
+Требуемые переменные:
+- `REDIS_HOST` - хост Redis сервера (например, `localhost` или `redis`)
+- `REDIS_PORT` - порт Redis сервера (например, `6379`)
+- `REDIS_PASSWORD` - пароль для аутентификации (опционально)
+- `REDIS_DB` - номер базы данных Redis (опционально, по умолчанию 0)
+
+## Экспорты (index.ts)
+
+Пакет экспортирует:
+
+Модули:
+- `RedisClientModule` (default export)
+
+Сервисы:
+- `RedisClientService` (default export)
+
+Адаптеры:
+- `RedisSocketIoAdapter` (default export)
+
+Типы:
+- `RedisClientModuleOptions`
+- `RedisSocketIoAdapterOptions`
+
+Ошибки:
+- `RedisClientError` (default export)
+
+## Типичные сценарии использования
+
+### Базовое использование
+
+1. Создать конфигурацию Redis через `registerAs`
+2. Импортировать `RedisClientModule.forRootAsync()` в AppModule
+3. Инжектить `RedisClientService` в сервисы для работы с Redis
+
+### Socket.IO масштабирование
+
+1. Импортировать `RedisClientModule.forRootAsync()` в AppModule
+2. Использовать `RedisSocketIoAdapter` в main.ts для масштабирования Socket.IO серверов
+
+### Кэширование данных
+
+Использовать методы `get`, `set`, `del` с опциональным TTL для кэширования данных пользователей.
+
+### User-specific ключи
+
+Использовать `makeUserKey(userId, key)` для формирования ключей с префиксом `user:{userId}:{key}`.
+
+## Важные замечания
+
+1. **Singleton Pattern** - RedisClientService использует статический экземпляр для единого подключения
+2. **Graceful Shutdown** - `onModuleDestroy()` автоматически вызывает `disconnect()`
+3. **Event Handlers** - логирование событий connect, error, close через LoggerService
+4. **RedisClientError** - все ошибки оборачиваются в RedisClientError с автоматическим логированием
+5. **getClient()** - доступ к прямому экземпляру ioredis для продвинутых операций (используйте только если стандартных методов недостаточно)
+6. **Socket.IO Adapter** - требует отдельные клиенты для pub/sub (создаются автоматически в адаптере)
+
+## Тестирование
+
+Пакет имеет 100% покрытие тестами. Все компоненты протестированы через Jest.
+
+## Зависимости
+
+- `ioredis` - Redis клиент для Node.js
+- `@nestjs/common` - NestJS core
+- `@nestjs/config` - Конфигурация (опционально, для async конфигурации)
+- `@makebelieve21213-packages/logger` - Логирование
+- `@socket.io/redis-adapter` - Socket.IO Redis adapter (peer dependency)
+- `reflect-metadata` - TypeScript decorators
