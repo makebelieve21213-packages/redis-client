@@ -1,4 +1,5 @@
 import type Redis from "ioredis";
+import type { RedisStreamReadResult } from "src/types/redis-stream.types";
 
 // Интерфейс для Redis клиента
 export default interface RedisClientContract {
@@ -86,10 +87,7 @@ export default interface RedisClientContract {
 	xread(
 		streams: Array<{ key: string; id: string }>,
 		count?: number
-	): Promise<Array<{
-		key: string;
-		messages: Array<{ id: string; fields: Record<string, string> }>;
-	}> | null>;
+	): Promise<RedisStreamReadResult[] | null>;
 
 	// Обрезать Stream до maxlen
 	xtrim(key: string, maxlen: number): Promise<number>;

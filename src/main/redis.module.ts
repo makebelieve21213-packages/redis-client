@@ -1,11 +1,24 @@
-import { LoggerService } from "@makebelieve21213-packages/logger";
 import { Module, Global, DynamicModule, Provider } from "@nestjs/common";
 import RedisClientService from "src/main/redis.service";
+import RedisConnectionService from "src/main/services/redis-connection.service";
+import RedisHashService from "src/main/services/redis-hash.service";
+import RedisKeyService from "src/main/services/redis-key.service";
+import RedisSetService from "src/main/services/redis-set.service";
+import RedisSortedSetService from "src/main/services/redis-sorted-set.service";
+import RedisStreamService from "src/main/services/redis-stream.service";
 import { REDIS_CLIENT_OPTIONS } from "src/types/injection-keys";
-import {
-	RedisClientModuleOptions,
-	RedisClientModuleAsyncOptions,
-} from "src/types/module-options.interface";
+
+import type { RedisClientModuleAsyncOptions } from "src/types/module-options.interface";
+
+const REDIS_SERVICES = [
+	RedisConnectionService,
+	RedisKeyService,
+	RedisHashService,
+	RedisSortedSetService,
+	RedisSetService,
+	RedisStreamService,
+	RedisClientService,
+];
 
 // Глобальный модуль для единого подключения к Redis
 @Global()
@@ -21,17 +34,7 @@ export default class RedisClientModule {
 				useFactory: options.useFactory,
 				inject: options.inject || [],
 			},
-			{
-				provide: RedisClientService,
-				useFactory: (
-					moduleOptions: RedisClientModuleOptions,
-					logger: LoggerService
-				): RedisClientService => {
-					// NestJS автоматически вызовет onModuleInit() - не нужно вызывать вручную
-					return new RedisClientService(moduleOptions, logger);
-				},
-				inject: [REDIS_CLIENT_OPTIONS, LoggerService],
-			},
+			...REDIS_SERVICES,
 		];
 
 		return {

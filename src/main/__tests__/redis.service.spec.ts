@@ -3,6 +3,12 @@ import { Test } from "@nestjs/testing";
 import Redis from "ioredis";
 import RedisClientError from "src/errors/redis.error";
 import RedisClientService from "src/main/redis.service";
+import RedisConnectionService from "src/main/services/redis-connection.service";
+import RedisHashService from "src/main/services/redis-hash.service";
+import RedisKeyService from "src/main/services/redis-key.service";
+import RedisSetService from "src/main/services/redis-set.service";
+import RedisSortedSetService from "src/main/services/redis-sorted-set.service";
+import RedisStreamService from "src/main/services/redis-stream.service";
 import { REDIS_CLIENT_OPTIONS } from "src/types/injection-keys";
 
 import type { TestingModule } from "@nestjs/testing";
@@ -25,6 +31,7 @@ jest.mock("@makebelieve21213-packages/logger", () => ({
 
 describe("RedisClientService", () => {
 	let service: RedisClientService;
+	let connectionService: RedisConnectionService;
 	let mockRedisInstance: jest.Mocked<Redis>;
 	let mockLogger: LoggerService;
 
@@ -39,7 +46,7 @@ describe("RedisClientService", () => {
 		mockLogger = new LoggerService({} as { serviceName: string });
 
 		// Сброс статического экземпляра
-		(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+		RedisConnectionService.resetInstance();
 
 		// Создаем мок Redis инстанса
 		mockRedisInstance = {
@@ -87,22 +94,29 @@ describe("RedisClientService", () => {
 					provide: LoggerService,
 					useValue: mockLogger,
 				},
+				RedisConnectionService,
+				RedisKeyService,
+				RedisHashService,
+				RedisSortedSetService,
+				RedisSetService,
+				RedisStreamService,
 				RedisClientService,
 			],
 		}).compile();
 
+		connectionService = module.get<RedisConnectionService>(RedisConnectionService);
 		service = module.get<RedisClientService>(RedisClientService);
 	});
 
 	afterEach(() => {
 		jest.clearAllMocks();
 		// Очищаем статический экземпляр после каждого теста
-		(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+		RedisConnectionService.resetInstance();
 	});
 
 	describe("onModuleInit", () => {
 		it("should initialize Redis client on first call", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			expect(Redis).toHaveBeenCalledWith({
 				host: mockOptions.host,
@@ -118,10 +132,10 @@ describe("RedisClientService", () => {
 		});
 
 		it("should not reinitialize if already initialized", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			jest.clearAllMocks();
 
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			expect(Redis).not.toHaveBeenCalled();
 			expect(mockRedisInstance.connect).not.toHaveBeenCalled();
@@ -131,15 +145,18 @@ describe("RedisClientService", () => {
 			const error = new Error("Connection failed");
 			mockRedisInstance.connect.mockRejectedValueOnce(error);
 
-			await expect(service.onModuleInit()).rejects.toThrow(RedisClientError);
+			await expect(connectionService.onModuleInit()).rejects.toThrow(RedisClientError);
 
 			// Сбрасываем instance перед вторым вызовом, так как при ошибке он все еще установлен
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 			mockRedisInstance.connect.mockRejectedValueOnce(error);
-			await expect(service.onModuleInit()).rejects.toThrow("Не удалось подключиться к Redis");
+			await expect(connectionService.onModuleInit()).rejects.toThrow(
+				"Не удалось подключиться к Redis"
+			);
 		});
 
 		it("should handle connection with default db when db is not provided", async () => {
+			RedisConnectionService.resetInstance();
 			const optionsWithoutDb: RedisClientModuleOptions = {
 				host: "localhost",
 				port: 6379,
@@ -155,12 +172,18 @@ describe("RedisClientService", () => {
 						provide: LoggerService,
 						useValue: mockLogger,
 					},
+					RedisConnectionService,
+					RedisKeyService,
+					RedisHashService,
+					RedisSortedSetService,
+					RedisSetService,
+					RedisStreamService,
 					RedisClientService,
 				],
 			}).compile();
 
-			const serviceWithoutDb = module.get<RedisClientService>(RedisClientService);
-			await serviceWithoutDb.onModuleInit();
+			const connectionWithoutDb = module.get<RedisConnectionService>(RedisConnectionService);
+			await connectionWithoutDb.onModuleInit();
 
 			expect(Redis).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -170,6 +193,7 @@ describe("RedisClientService", () => {
 		});
 
 		it("should handle connection with additional options", async () => {
+			RedisConnectionService.resetInstance();
 			const optionsWithExtras: RedisClientModuleOptions = {
 				host: "localhost",
 				port: 6379,
@@ -189,12 +213,18 @@ describe("RedisClientService", () => {
 						provide: LoggerService,
 						useValue: mockLogger,
 					},
+					RedisConnectionService,
+					RedisKeyService,
+					RedisHashService,
+					RedisSortedSetService,
+					RedisSetService,
+					RedisStreamService,
 					RedisClientService,
 				],
 			}).compile();
 
-			const serviceWithExtras = module.get<RedisClientService>(RedisClientService);
-			await serviceWithExtras.onModuleInit();
+			const connectionWithExtras = module.get<RedisConnectionService>(RedisConnectionService);
+			await connectionWithExtras.onModuleInit();
 
 			expect(Redis).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -207,16 +237,30 @@ describe("RedisClientService", () => {
 
 	describe("onModuleDestroy", () => {
 		it("should disconnect on module destroy", async () => {
-			await service.onModuleInit();
-			await service.onModuleDestroy();
+			await connectionService.onModuleInit();
+			await connectionService.onModuleDestroy();
 
 			expect(mockRedisInstance.quit).toHaveBeenCalled();
 		});
 	});
 
+	describe("getClient", () => {
+		it("should return Redis client when initialized", async () => {
+			await connectionService.onModuleInit();
+			const client = service.getClient();
+			expect(client).toBe(mockRedisInstance);
+		});
+
+		it("should throw RedisClientError when client not initialized", () => {
+			RedisConnectionService.resetInstance();
+			expect(() => service.getClient()).toThrow(RedisClientError);
+			expect(() => service.getClient()).toThrow("Redis клиент не инициализирован");
+		});
+	});
+
 	describe("get", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		it("should get value by key", async () => {
@@ -252,19 +296,19 @@ describe("RedisClientService", () => {
 		});
 
 		it("should throw RedisClientError if client is not initialized", async () => {
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 
 			await expect(service.get("key")).rejects.toThrow(RedisClientError);
 
 			// Сбрасываем instance перед вторым вызовом
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 			await expect(service.get("key")).rejects.toThrow("Redis клиент не инициализирован");
 		});
 	});
 
 	describe("set", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		it("should set value without TTL", async () => {
@@ -326,20 +370,20 @@ describe("RedisClientService", () => {
 		});
 
 		it("should throw RedisClientError if client is not initialized", async () => {
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 
 			await expect(service.set("key", "value")).rejects.toThrow(RedisClientError);
 
 			// Сбрасываем instance перед вторым вызовом
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 			await expect(service.set("key", "value")).rejects.toThrow("Redis клиент не инициализирован");
 		});
 
 		it("should throw RedisClientError if client is initialized but not connected", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Устанавливаем статус клиента в "connecting" вместо "ready"
-			const instance = (RedisClientService as unknown as { instance: Redis | null }).instance;
+			const instance = RedisConnectionService.getInstance();
 			if (instance) {
 				(instance as unknown as { status: string }).status = "connecting";
 			}
@@ -349,10 +393,10 @@ describe("RedisClientService", () => {
 		});
 
 		it("should throw RedisClientError with null status when client status is null", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Устанавливаем статус клиента в null
-			const instance = (RedisClientService as unknown as { instance: Redis | null }).instance;
+			const instance = RedisConnectionService.getInstance();
 			if (instance) {
 				(instance as unknown as { status: string | null }).status = null;
 			}
@@ -364,7 +408,7 @@ describe("RedisClientService", () => {
 
 	describe("del", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		it("should delete key and return count", async () => {
@@ -399,19 +443,19 @@ describe("RedisClientService", () => {
 		});
 
 		it("should throw RedisClientError if client is not initialized", async () => {
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 
 			await expect(service.del("key")).rejects.toThrow(RedisClientError);
 
 			// Сбрасываем instance перед вторым вызовом
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 			await expect(service.del("key")).rejects.toThrow("Redis клиент не инициализирован");
 		});
 	});
 
 	describe("ttl", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		it("should return TTL in seconds", async () => {
@@ -456,12 +500,12 @@ describe("RedisClientService", () => {
 		});
 
 		it("should throw RedisClientError if client is not initialized", async () => {
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 
 			await expect(service.ttl("key")).rejects.toThrow(RedisClientError);
 
 			// Сбрасываем instance перед вторым вызовом
-			(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+			RedisConnectionService.resetInstance();
 			await expect(service.ttl("key")).rejects.toThrow("Redis клиент не инициализирован");
 		});
 	});
@@ -497,7 +541,7 @@ describe("RedisClientService", () => {
 
 	describe("isConnected", () => {
 		it("should return true if Redis is connected", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.status = "ready";
 
 			const result = service.isConnected();
@@ -506,7 +550,7 @@ describe("RedisClientService", () => {
 		});
 
 		it("should return false if Redis is not connected", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.status = "disconnected" as never;
 
 			const result = service.isConnected();
@@ -523,12 +567,12 @@ describe("RedisClientService", () => {
 
 	describe("disconnect", () => {
 		it("should disconnect and clear instance", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			await service.disconnect();
 
 			expect(mockRedisInstance.quit).toHaveBeenCalled();
-			expect((RedisClientService as unknown as { instance: Redis | null }).instance).toBeNull();
+			expect(RedisConnectionService.getInstance()).toBeNull();
 		});
 
 		it("should not throw if already disconnected", async () => {
@@ -548,7 +592,7 @@ describe("RedisClientService", () => {
 				}
 			);
 
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Вызываем handler для покрытия
 			expect(() => connectHandler()).not.toThrow();
@@ -565,7 +609,7 @@ describe("RedisClientService", () => {
 				}
 			);
 
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Вызываем handler для покрытия
 			const testError = new Error("Test error");
@@ -583,7 +627,7 @@ describe("RedisClientService", () => {
 				}
 			);
 
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Вызываем handler для покрытия случая без stack
 			const testError = new Error("Test error");
@@ -602,7 +646,7 @@ describe("RedisClientService", () => {
 				}
 			);
 
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 
 			// Вызываем handler для покрытия
 			expect(() => closeHandler()).not.toThrow();
@@ -611,28 +655,28 @@ describe("RedisClientService", () => {
 
 	describe("error handling for non-Error objects", () => {
 		it("should handle non-Error object in get", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.get.mockRejectedValueOnce("string error");
 
 			await expect(service.get("key")).rejects.toThrow(RedisClientError);
 		});
 
 		it("should handle non-Error object in set", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.set.mockRejectedValueOnce("string error");
 
 			await expect(service.set("key", "value")).rejects.toThrow(RedisClientError);
 		});
 
 		it("should handle non-Error object in del", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.del.mockRejectedValueOnce("string error");
 
 			await expect(service.del("key")).rejects.toThrow(RedisClientError);
 		});
 
 		it("should handle non-Error object in ttl", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			mockRedisInstance.ttl.mockRejectedValueOnce("string error");
 
 			await expect(service.ttl("key")).rejects.toThrow(RedisClientError);
@@ -641,13 +685,13 @@ describe("RedisClientService", () => {
 		it("should handle non-Error object in onModuleInit", async () => {
 			mockRedisInstance.connect.mockRejectedValueOnce("string error");
 
-			await expect(service.onModuleInit()).rejects.toThrow(RedisClientError);
+			await expect(connectionService.onModuleInit()).rejects.toThrow(RedisClientError);
 		});
 	});
 
 	describe("error handling for Error objects without stack", () => {
 		it("should handle Error without stack in get", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			const errorWithoutStack = new Error("Error without stack");
 			delete errorWithoutStack.stack;
 			mockRedisInstance.get.mockRejectedValueOnce(errorWithoutStack);
@@ -656,7 +700,7 @@ describe("RedisClientService", () => {
 		});
 
 		it("should handle Error without stack in set", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			const errorWithoutStack = new Error("Error without stack");
 			delete errorWithoutStack.stack;
 			mockRedisInstance.set.mockRejectedValueOnce(errorWithoutStack);
@@ -665,7 +709,7 @@ describe("RedisClientService", () => {
 		});
 
 		it("should handle Error without stack in del", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			const errorWithoutStack = new Error("Error without stack");
 			delete errorWithoutStack.stack;
 			mockRedisInstance.del.mockRejectedValueOnce(errorWithoutStack);
@@ -674,7 +718,7 @@ describe("RedisClientService", () => {
 		});
 
 		it("should handle Error without stack in ttl", async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 			const errorWithoutStack = new Error("Error without stack");
 			delete errorWithoutStack.stack;
 			mockRedisInstance.ttl.mockRejectedValueOnce(errorWithoutStack);
@@ -687,13 +731,13 @@ describe("RedisClientService", () => {
 			delete errorWithoutStack.stack;
 			mockRedisInstance.connect.mockRejectedValueOnce(errorWithoutStack);
 
-			await expect(service.onModuleInit()).rejects.toThrow(RedisClientError);
+			await expect(connectionService.onModuleInit()).rejects.toThrow(RedisClientError);
 		});
 	});
 
 	describe("Hash methods", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		describe("hset", () => {
@@ -716,7 +760,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hset("hash:key", "field", "value")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -747,7 +791,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hget("hash:key", "field")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -773,7 +817,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hgetall("hash:key")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -798,7 +842,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hdel("hash:key", "field")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -823,7 +867,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hexists("hash:key", "field")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -862,7 +906,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.hscan("hash:key", 0)).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -870,7 +914,7 @@ describe("RedisClientService", () => {
 
 	describe("Sorted Set methods", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		describe("zadd", () => {
@@ -897,7 +941,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.zadd("zset:key", 100, "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -929,7 +973,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.zrange("zset:key", 0, -1)).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -954,7 +998,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.zrem("zset:key", "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -979,7 +1023,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.zremrangebyscore("zset:key", 100, 200)).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1004,7 +1048,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.zscore("zset:key", "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1012,7 +1056,7 @@ describe("RedisClientService", () => {
 
 	describe("Set methods", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		describe("sadd", () => {
@@ -1035,7 +1079,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.sadd("set:key", "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1060,7 +1104,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.smembers("set:key")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1085,7 +1129,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.srem("set:key", "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1110,7 +1154,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.sismember("set:key", "member")).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1118,7 +1162,7 @@ describe("RedisClientService", () => {
 
 	describe("Streams methods", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		describe("xadd", () => {
@@ -1157,7 +1201,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.xadd("stream:key", "*", { field1: "value1" })).rejects.toThrow(
 					RedisClientError
 				);
@@ -1211,7 +1255,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.xread([{ key: "stream:key", id: "0" }])).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1236,7 +1280,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.xtrim("stream:key", 100)).rejects.toThrow(RedisClientError);
 			});
 		});
@@ -1244,7 +1288,7 @@ describe("RedisClientService", () => {
 
 	describe("Cleanup methods", () => {
 		beforeEach(async () => {
-			await service.onModuleInit();
+			await connectionService.onModuleInit();
 		});
 
 		describe("scan", () => {
@@ -1288,7 +1332,7 @@ describe("RedisClientService", () => {
 			});
 
 			it("should throw RedisClientError if client is not initialized", async () => {
-				(RedisClientService as unknown as { instance: Redis | null }).instance = null;
+				RedisConnectionService.resetInstance();
 				await expect(service.scan(0)).rejects.toThrow(RedisClientError);
 			});
 		});

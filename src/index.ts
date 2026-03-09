@@ -4,3 +4,4 @@ export { default as RedisSocketIoAdapter } from "src/adapters/redis-socket-io.ad
 
 export type { RedisClientModuleOptions } from "src/types/module-options.interface";
 export type { RedisSocketIoAdapterOptions } from "src/types/socket-io-adapter.interface";
+export type { RedisStreamMessage, RedisStreamReadResult } from "src/types/redis-stream.types";

@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import RedisClientModule from "src/main/redis.module";
 import RedisClientService from "src/main/redis.service";
+import RedisConnectionService from "src/main/services/redis-connection.service";
 import { REDIS_CLIENT_OPTIONS } from "src/types/injection-keys";
 
 import type { DynamicModule } from "@nestjs/common";
@@ -55,7 +56,7 @@ describe("RedisClientModule", () => {
 	afterEach(() => {
 		jest.clearAllMocks();
 		// Очищаем статический экземпляр после каждого теста
-		(RedisClientService as unknown as { instance: unknown }).instance = null;
+		RedisConnectionService.resetInstance();
 	});
 
 	describe("forRootAsync", () => {

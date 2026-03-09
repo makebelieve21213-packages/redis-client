@@ -184,6 +184,48 @@ describe("RedisSocketIoAdapter", () => {
 			createIOServerSpy.mockRestore();
 		});
 
+		it("должен использовать cors с methods и allowedHeaders", () => {
+			const optionsWithCorsExtras: RedisSocketIoAdapterOptions = {
+				cors: {
+					origin: "http://localhost:3000",
+					credentials: false,
+					methods: ["GET", "POST"],
+					allowedHeaders: ["Authorization"],
+				},
+			};
+
+			const adapterWithCorsExtras = new RedisSocketIoAdapter(
+				mockApp as never,
+				mockRedisClientService as RedisClientService,
+				mockLoggerService as LoggerService,
+				optionsWithCorsExtras
+			);
+
+			const mockServer = {
+				adapter: jest.fn(),
+			} as unknown as Server;
+
+			const createIOServerSpy = jest
+				.spyOn(Object.getPrototypeOf(Object.getPrototypeOf(adapterWithCorsExtras)), "createIOServer")
+				.mockReturnValue(mockServer);
+
+			adapterWithCorsExtras.createIOServer(3001);
+
+			expect(createIOServerSpy).toHaveBeenCalledWith(
+				3001,
+				expect.objectContaining({
+					cors: {
+						origin: "http://localhost:3000",
+						credentials: false,
+						methods: ["GET", "POST"],
+						allowedHeaders: ["Authorization"],
+					},
+				})
+			);
+
+			createIOServerSpy.mockRestore();
+		});
+
 		it("должен объединять socketOptions с переданными опциями", () => {
 			const optionsWithSocketOptions: RedisSocketIoAdapterOptions = {
 				cors: {
